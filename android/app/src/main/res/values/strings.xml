@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_desc">무선 셀카 모니터에서 서브폰의 원격 셔터 버튼을 눌렀을 때 삼성 카메라 셔터를 터치하여 촬영합니다.</string>
+</resources>

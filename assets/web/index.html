@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="셀카 모니터">
+  <meta name="theme-color" content="#000000">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>무선 셀카 모니터 - 뷰파인더</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
+      overflow: hidden;
+      background-color: #000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #fff;
+      touch-action: none;
+    }
+
+    #app-container {
+      position: relative;
+      width: 100vw;
+      height: 100%;
+      height: 100dvh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: #000;
+      overflow: hidden;
+    }
+
+    /* Edge-to-Edge Canvas: Fills 100% of the screen by default */
+    canvas#viewfinder {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100%;
+      height: 100dvh;
+      object-fit: cover; /* Default: fills entire screen without black borders */
+      transition: transform 0.2s cubic-bezier(0.2, 0.9, 0.4, 1);
+    }
+
+    canvas#viewfinder.fit-contain {
+      object-fit: contain;
+    }
+
+    /* Grid Overlay */
+    .grid-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-rows: 1fr 1fr 1fr;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+      z-index: 10;
+    }
+    .grid-overlay.active {
+      opacity: 0.35;
+    }
+    .grid-overlay div {
+      border: 1px solid rgba(255, 255, 255, 0.6);
+    }
+
+    /* Flash Overlay */
+    .flash-overlay {
+      position: absolute;
+      inset: 0;
+      background: #fff;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.08s ease-out;
+      z-index: 100;
+    }
+    .flash-overlay.flashing {
+      opacity: 0.95;
+    }
+
+    /* Floating Top HUD */
+    .top-hud {
+      position: absolute;
+      top: env(safe-area-inset-top, 16px);
+      left: 0;
+      width: 100%;
+      padding: 12px 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 50;
+      pointer-events: none;
+    }
+    .top-hud > * {
+      pointer-events: auto;
+    }
+
+    .badge-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(20, 20, 20, 0.7);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .badge-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #34C759;
+      box-shadow: 0 0 8px #34C759;
+    }
+    .badge-dot.disconnected {
+      background: #FF3B30;
+      box-shadow: 0 0 8px #FF3B30;
+    }
+    .badge-dot.standby {
+      background: #FF9F0A;
+      box-shadow: 0 0 8px #FF9F0A;
+    }
+
+    .top-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .icon-btn {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: rgba(25, 25, 25, 0.75);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #fff;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 16px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      touch-action: manipulation;
+    }
+    .icon-btn:active {
+      transform: scale(0.92);
+      background: rgba(50, 50, 50, 0.9);
+    }
+    .icon-btn.active {
+      background: #FFD60A;
+      color: #000;
+      border-color: #FFD60A;
+    }
+
+    /* Floating Right Side Controls */
+    .side-hud {
+      position: absolute;
+      right: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      z-index: 50;
+    }
+
+    .pill-btn {
+      padding: 9px 12px;
+      background: rgba(25, 25, 25, 0.75);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 18px;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+      touch-action: manipulation;
+    }
+    .pill-btn:active {
+      transform: scale(0.94);
+    }
+    .pill-btn.active {
+      background: #007AFF;
+      border-color: #007AFF;
+    }
+
+    /* Floating Bottom Shutter Bar */
+    .bottom-hud {
+      position: absolute;
+      bottom: env(safe-area-inset-bottom, 24px);
+      left: 0;
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 24px;
+      z-index: 50;
+      pointer-events: none;
+      padding-bottom: 8px;
+    }
+    .bottom-hud > * {
+      pointer-events: auto;
+    }
+
+    .shutter-outer {
+      width: 78px;
+      height: 78px;
+      border-radius: 50%;
+      border: 4px solid #fff;
+      background: rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      touch-action: manipulation;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+      transition: transform 0.1s ease, border-color 0.2s ease;
+    }
+    .shutter-outer:active {
+      transform: scale(0.92);
+    }
+    .shutter-inner {
+      width: 62px;
+      height: 62px;
+      border-radius: 50%;
+      background: #fff;
+      transition: all 0.2s ease;
+    }
+
+    /* Countdown Overlay */
+    .countdown-overlay {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 110px;
+      font-weight: 800;
+      color: #fff;
+      text-shadow: 0 0 30px rgba(0,0,0,0.9);
+      display: none;
+      z-index: 90;
+      animation: pulse 1s infinite alternate;
+    }
+
+    @keyframes pulse {
+      0% { transform: translate(-50%, -50%) scale(1); }
+      100% { transform: translate(-50%, -50%) scale(1.18); }
+    }
+
+    /* Toast */
+    .toast {
+      position: absolute;
+      top: 85px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(20, 20, 20, 0.9);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      padding: 8px 18px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #fff;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+      z-index: 100;
+      white-space: nowrap;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+    }
+    .toast.show {
+      opacity: 1;
+    }
+
+    /* Offline Overlay */
+    .offline-banner {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.92);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      padding: 24px;
+      text-align: center;
+      z-index: 200;
+    }
+    .offline-banner h2 {
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .offline-banner p {
+      font-size: 14px;
+      color: #aaa;
+      max-width: 300px;
+      line-height: 1.5;
+    }
+    .retry-btn {
+      padding: 10px 24px;
+      border-radius: 22px;
+      background: #007AFF;
+      color: #fff;
+      border: none;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* Standby Overlay */
+    .standby-banner {
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 10, 14, 0.96);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      padding: 32px;
+      text-align: center;
+      z-index: 180;
+      transition: opacity 0.25s ease;
+    }
+    .standby-icon {
+      font-size: 56px;
+      margin-bottom: 4px;
+      animation: float 2.5s ease-in-out infinite;
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-8px); }
+    }
+    .standby-banner h2 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.4px;
+    }
+    .standby-banner p {
+      font-size: 14px;
+      color: #aaa;
+      max-width: 290px;
+      line-height: 1.6;
+    }
+    .standby-badge {
+      margin-top: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 7px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      color: #34C759;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div id="app-container">
+    <!-- Viewport Canvas (100% full screen) -->
+    <canvas id="viewfinder"></canvas>
+    <div class="grid-overlay" id="gridOverlay">
+      <div></div><div></div><div></div>
+      <div></div><div></div><div></div>
+      <div></div><div></div><div></div>
+    </div>
+    <div class="flash-overlay" id="flashOverlay"></div>
+    <div class="countdown-overlay" id="countdownOverlay">3</div>
+
+    <!-- Top Floating HUD -->
+    <div class="top-hud">
+      <div class="badge-status">
+        <div class="badge-dot" id="statusDot"></div>
+        <span id="statusText">연결 대기중</span>
+        <span style="opacity: 0.5; margin-left: 4px;" id="statFps">0 fps</span>
+      </div>
+      <div class="top-actions">
+        <!-- Timer Toggle -->
+        <button class="icon-btn" id="btnTimer" title="타이머">⏱️</button>
+        <!-- Grid Toggle -->
+        <button class="icon-btn" id="btnGrid" title="격자선">#</button>
+        <!-- Hide HUD (Clean Fullscreen Preview) -->
+        <button class="icon-btn" id="btnToggleHud" title="UI 숨기기">👁️</button>
+      </div>
+    </div>
+
+    <!-- Side Floating HUD -->
+    <div class="side-hud" id="sideHud">
+      <!-- Mirror Mode Button (Default OFF) -->
+      <button class="pill-btn" id="btnMirror">
+        <span style="font-size: 17px;">🪞</span>
+        <span>거울 모드</span>
+      </button>
+      <!-- Rotation Button -->
+      <button class="pill-btn" id="btnRotate">
+        <span style="font-size: 17px;">🔄</span>
+        <span id="rotateLabel">0°</span>
+      </button>
+      <!-- Fill Screen Toggle: Cover (Full screen) vs Contain (Fit) -->
+      <button class="pill-btn active" id="btnFit">
+        <span style="font-size: 17px;">📱</span>
+        <span id="fitLabel">화면 가득</span>
+      </button>
+    </div>
+
+    <!-- Bottom Floating Shutter Bar -->
+    <div class="bottom-hud" id="bottomHud">
+      <!-- Remote Shutter Button (Triggers Volume Down / Camera capture on Samsung Camera!) -->
+      <div class="shutter-outer" id="shutterBtn" title="원격 촬영">
+        <div class="shutter-inner" id="shutterInner"></div>
+      </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast">메시지</div>
+
+    <!-- Standby Overlay (Waiting for mirroring to start) -->
+    <div class="standby-banner" id="standbyBanner" style="display: flex;">
+      <div class="standby-icon" id="standbyIcon">📡</div>
+      <h2 id="standbyTitle">화면 공유 대기 중</h2>
+      <p id="standbyDesc">메인 폰(갤럭시)에서 <b>[화면 미러링 시작]</b>을 누르면 실시간 뷰가 자동으로 표시됩니다.</p>
+      <div class="standby-badge" id="standbyBadge">
+        <span class="badge-dot" id="standbyDot"></span>
+        <span id="standbyBadgeText">갤럭시 연결 완료 (대기 상태)</span>
+      </div>
+    </div>
+
+    <!-- Offline Overlay -->
+    <div class="offline-banner" id="offlineBanner" style="display: none;">
+      <h2>메인 폰 연결 끊김</h2>
+      <p>갤럭시의 핫스팟 또는 Wi-Fi에 정상 연결되어 있는지 확인해 주세요.</p>
+      <button class="retry-btn" id="btnReconnect">다시 연결</button>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      isMirrored: false,    // Default OFF (User request)
+      rotation: 0,          // 0, 90, 180, 270
+      isCover: true,        // Default: 100% full screen fill without black bars!
+      isGrid: false,
+      timerSec: 0,
+      hudVisible: true,
+      fps: 0,
+      frameCount: 0,
+      lastFpsTime: performance.now(),
+      ws: null,
+      isConnected: false,
+      isStandby: true,
+      isStoppedByHost: true,
+      lastFrameTime: 0,
+      hasConnectedBefore: false,
+      offlineTimer: null,
+      isDecoding: false
+    };
+
+    // DOM
+    const canvas = document.getElementById('viewfinder');
+    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true }) || canvas.getContext('2d');
+    const gridOverlay = document.getElementById('gridOverlay');
+    const flashOverlay = document.getElementById('flashOverlay');
+    const countdownOverlay = document.getElementById('countdownOverlay');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const statFps = document.getElementById('statFps');
+    const toast = document.getElementById('toast');
+    const offlineBanner = document.getElementById('offlineBanner');
+    const standbyBanner = document.getElementById('standbyBanner');
+    const standbyIcon = document.getElementById('standbyIcon');
+    const standbyTitle = document.getElementById('standbyTitle');
+    const standbyDesc = document.getElementById('standbyDesc');
+    const standbyBadgeText = document.getElementById('standbyBadgeText');
+    const standbyDot = document.getElementById('standbyDot');
+
+    const btnMirror = document.getElementById('btnMirror');
+    const btnRotate = document.getElementById('btnRotate');
+    const rotateLabel = document.getElementById('rotateLabel');
+    const btnFit = document.getElementById('btnFit');
+    const fitLabel = document.getElementById('fitLabel');
+    const btnGrid = document.getElementById('btnGrid');
+    const btnTimer = document.getElementById('btnTimer');
+    const btnToggleHud = document.getElementById('btnToggleHud');
+    const sideHud = document.getElementById('sideHud');
+    const bottomHud = document.getElementById('bottomHud');
+    const shutterBtn = document.getElementById('shutterBtn');
+    const btnReconnect = document.getElementById('btnReconnect');
+
+    // Audio Shutter Effect
+    let audioCtx = null;
+    function playShutterSound() {
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.08);
+        gain.gain.setValueAtTime(0.7, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.08);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.09);
+      } catch (e) {}
+    }
+
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      clearTimeout(toast._timer);
+      toast._timer = setTimeout(() => toast.classList.remove('show'), 1800);
+    }
+
+    // Apply Transforms (Mirror, Rotate, Fill)
+    function applyTransforms() {
+      let transform = '';
+      if (state.isMirrored) {
+        transform += 'scaleX(-1) ';
+      }
+      if (state.rotation !== 0) {
+        transform += `rotate(${state.rotation}deg) `;
+      }
+      canvas.style.transform = transform;
+
+      // Fill screen vs Contain
+      if (state.isCover) {
+        canvas.className = ''; // object-fit: cover
+      } else {
+        canvas.className = 'fit-contain'; // object-fit: contain
+      }
+    }
+
+    // 🪞 Mirror Mode Toggle
+    btnMirror.addEventListener('click', () => {
+      state.isMirrored = !state.isMirrored;
+      btnMirror.classList.toggle('active', state.isMirrored);
+      applyTransforms();
+      showToast(state.isMirrored ? '거울 모드 ON (좌우 반전)' : '원본 뷰 ON');
+      if (navigator.vibrate) navigator.vibrate(20);
+    });
+
+    // 🔄 Rotation Toggle (0 -> 90 -> 180 -> 270)
+    btnRotate.addEventListener('click', () => {
+      state.rotation = (state.rotation + 90) % 360;
+      rotateLabel.textContent = `${state.rotation}°`;
+      applyTransforms();
+      showToast(`회전: ${state.rotation}°`);
+      if (navigator.vibrate) navigator.vibrate(20);
+    });
+
+    // 📱 Fill Screen Toggle (Cover vs Contain)
+    btnFit.addEventListener('click', () => {
+      state.isCover = !state.isCover;
+      btnFit.classList.toggle('active', state.isCover);
+      fitLabel.textContent = state.isCover ? '화면 가득' : '비율 맞춤';
+      applyTransforms();
+      showToast(state.isCover ? '화면 꽉 채우기 (전체화면)' : '원본 비율 맞춤');
+      if (navigator.vibrate) navigator.vibrate(20);
+    });
+
+    // # Grid Toggle
+    btnGrid.addEventListener('click', () => {
+      state.isGrid = !state.isGrid;
+      gridOverlay.classList.toggle('active', state.isGrid);
+      btnGrid.classList.toggle('active', state.isGrid);
+      showToast(state.isGrid ? '격자선 켜짐' : '격자선 꺼짐');
+    });
+
+    // ⏱️ Timer Toggle (0 -> 3 -> 5 -> 10)
+    const timerSteps = [0, 3, 5, 10];
+    btnTimer.addEventListener('click', () => {
+      const idx = timerSteps.indexOf(state.timerSec);
+      state.timerSec = timerSteps[(idx + 1) % timerSteps.length];
+      btnTimer.classList.toggle('active', state.timerSec > 0);
+      showToast(state.timerSec === 0 ? '타이머 OFF' : `타이머 ${state.timerSec}초 설정`);
+    });
+
+    // 👁️ Toggle HUD
+    btnToggleHud.addEventListener('click', () => {
+      state.hudVisible = !state.hudVisible;
+      sideHud.style.display = state.hudVisible ? 'flex' : 'none';
+      bottomHud.style.display = state.hudVisible ? 'flex' : 'none';
+      showToast(state.hudVisible ? '버튼 표시' : '버튼 숨김 (화면 탭 시 재표시)');
+    });
+
+    // Double-tap or tap screen to toggle HUD back
+    canvas.addEventListener('click', () => {
+      if (!state.hudVisible) {
+        state.hudVisible = true;
+        sideHud.style.display = 'flex';
+        bottomHud.style.display = 'flex';
+      }
+    });
+
+    // 📸 Remote Shutter Click
+    function triggerCapture() {
+      flashOverlay.classList.add('flashing');
+      setTimeout(() => flashOverlay.classList.remove('flashing'), 100);
+      playShutterSound();
+      if (navigator.vibrate) navigator.vibrate([40, 60, 40]);
+
+      // Sends shutter signal to trigger Galaxy native camera!
+      sendAction('take_photo');
+      showToast('📸 찰칵! 촬영 완료');
+    }
+
+    shutterBtn.addEventListener('click', () => {
+      if (state.isStandby || state.isStoppedByHost) {
+        showToast('갤럭시에서 화면 미러링을 먼저 시작해 주세요');
+        return;
+      }
+
+      if (state.timerSec > 0) {
+        let count = state.timerSec;
+        countdownOverlay.textContent = count;
+        countdownOverlay.style.display = 'block';
+
+        const timerInterval = setInterval(() => {
+          count--;
+          if (navigator.vibrate) navigator.vibrate(15);
+          if (count > 0) {
+            countdownOverlay.textContent = count;
+          } else {
+            clearInterval(timerInterval);
+            countdownOverlay.style.display = 'none';
+            triggerCapture();
+          }
+        }, 1000);
+      } else {
+        triggerCapture();
+      }
+    });
+
+    // Standby Overlay Controller
+    function setStandby(isStandby, reason = 'ready') {
+      state.isStandby = isStandby;
+      if (isStandby) {
+        state.isStoppedByHost = true;
+        state.lastFrameTime = 0;
+        standbyBanner.style.display = 'flex';
+        offlineBanner.style.display = 'none';
+        statFps.textContent = '대기';
+
+        if (reason === 'stopped') {
+          statusText.textContent = '미러링 중지됨';
+          statusDot.className = 'badge-dot standby';
+          if (standbyIcon) standbyIcon.textContent = '⏸️';
+          if (standbyTitle) standbyTitle.textContent = '화면 미러링 중지됨';
+          if (standbyDesc) standbyDesc.innerHTML = '메인 폰(갤럭시)에서 <b>[화면 미러링 시작]</b>을 누르면 다시 시작됩니다.';
+          if (standbyBadgeText) standbyBadgeText.textContent = '미러링 일시 중지';
+          if (standbyDot) standbyDot.className = 'badge-dot standby';
+        } else {
+          statusText.textContent = '공유 대기 중';
+          statusDot.className = 'badge-dot standby';
+          if (standbyIcon) standbyIcon.textContent = '📡';
+          if (standbyTitle) standbyTitle.textContent = '화면 공유 대기 중';
+          if (standbyDesc) standbyDesc.innerHTML = '메인 폰(갤럭시)에서 <b>[화면 미러링 시작]</b>을 누르면 실시간 뷰가 자동으로 표시됩니다.';
+          if (standbyBadgeText) standbyBadgeText.textContent = '갤럭시 연결 완료 (대기 상태)';
+          if (standbyDot) standbyDot.className = 'badge-dot';
+        }
+
+        // Cleanly wipe the canvas so the frozen frame completely disappears!
+        try {
+          ctx.fillStyle = '#0a0a0c';
+          const w = canvas.width || 1080;
+          const h = canvas.height || 1920;
+          ctx.fillRect(0, 0, w, h);
+        } catch (_) {}
+      } else {
+        state.isStoppedByHost = false;
+        standbyBanner.style.display = 'none';
+        offlineBanner.style.display = 'none';
+        statusText.textContent = '실시간 미러링 중';
+        statusDot.className = 'badge-dot';
+      }
+    }
+
+    // Standby Watchdog: If mirroring was active but no frames arrive for 1.2s, auto-trigger standby!
+    setInterval(() => {
+      if (!state.isStandby && state.lastFrameTime > 0 && (performance.now() - state.lastFrameTime > 1200)) {
+        setStandby(true, 'stopped');
+      }
+    }, 400);
+
+    // WebSocket Client
+    let useImageBitmap = (typeof createImageBitmap === 'function');
+
+    function updateFps() {
+      state.frameCount++;
+      const now = performance.now();
+      if (now - state.lastFpsTime >= 1000) {
+        state.fps = state.frameCount;
+        state.frameCount = 0;
+        state.lastFpsTime = now;
+        statFps.textContent = `${state.fps} fps`;
+      }
+    }
+
+    function connectWebSocket() {
+      if (state.ws && (state.ws.readyState === WebSocket.CONNECTING || state.ws.readyState === WebSocket.OPEN)) {
+        return;
+      }
+
+      const loc = window.location;
+      const wsProto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${wsProto}//${loc.host}/ws`;
+
+      statusText.textContent = state.hasConnectedBefore ? '재연결 중...' : '연결 중...';
+      statusDot.className = 'badge-dot disconnected';
+
+      try {
+        state.ws = new WebSocket(wsUrl);
+        state.ws.binaryType = 'arraybuffer';
+
+        state.ws.onopen = () => {
+          clearTimeout(state.offlineTimer);
+          state.isConnected = true;
+          statusDot.className = 'badge-dot';
+          offlineBanner.style.display = 'none';
+          if (!state.hasConnectedBefore) {
+            state.hasConnectedBefore = true;
+            showToast('갤럭시 연결 성공!');
+          }
+          if (state.isStandby) {
+            standbyBanner.style.display = 'flex';
+            statusText.textContent = state.isStoppedByHost ? '미러링 중지됨' : '공유 대기 중';
+          } else {
+            statusText.textContent = '실시간 미러링 중';
+          }
+        };
+
+        state.ws.onmessage = async (event) => {
+          // Immediately hide offline banner on any valid incoming packet
+          offlineBanner.style.display = 'none';
+
+          // Handle Text Control Events from Host (mirroring_started / mirroring_stopped / status)
+          if (typeof event.data === 'string') {
+            try {
+              const msg = JSON.parse(event.data);
+              if (msg.event === 'mirroring_stopped') {
+                setStandby(true, 'stopped');
+              } else if (msg.event === 'mirroring_started') {
+                setStandby(false);
+              } else if (msg.event === 'status') {
+                setStandby(!msg.isMirroring, msg.isMirroring ? 'ready' : 'ready');
+              }
+            } catch (e) {}
+            return;
+          }
+
+          if (!event.data || event.data.byteLength < 100) return; // Ignore empty / keepalive packets
+
+          // If host explicitly stopped mirroring, do NOT accept trailing residual frames
+          if (state.isStoppedByHost) {
+            return;
+          }
+
+          state.lastFrameTime = performance.now();
+
+          // Active live frame arrived -> automatically dismiss standby overlay!
+          if (state.isStandby) {
+            setStandby(false);
+          }
+
+          // Flow Control / Backpressure:
+          // If browser is still decoding/rendering the previous frame, drop this one!
+          // This keeps latency at zero and prevents memory bloat or socket disconnection!
+          if (state.isDecoding) {
+            return;
+          }
+          state.isDecoding = true;
+
+          try {
+            // 1. Primary decoder: Hardware-accelerated createImageBitmap
+            if (useImageBitmap) {
+              try {
+                const blob = new Blob([event.data], { type: 'image/jpeg' });
+                const bitmap = await createImageBitmap(blob);
+                if (state.isStoppedByHost) {
+                  bitmap.close();
+                  return;
+                }
+                if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+                  canvas.width = bitmap.width;
+                  canvas.height = bitmap.height;
+                }
+                ctx.drawImage(bitmap, 0, 0);
+                bitmap.close();
+                updateFps();
+                return;
+              } catch (e) {
+                // If createImageBitmap fails on iOS Safari, gracefully fallback to HTMLImageElement
+                useImageBitmap = false;
+              }
+            }
+
+            // 2. Fallback decoder: Standard Image object with object URL
+            const blob = new Blob([event.data], { type: 'image/jpeg' });
+            const url = URL.createObjectURL(blob);
+            const img = new Image();
+            img.onload = () => {
+              if (state.isStoppedByHost) {
+                URL.revokeObjectURL(url);
+                return;
+              }
+              if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+              }
+              ctx.drawImage(img, 0, 0);
+              URL.revokeObjectURL(url);
+              updateFps();
+            };
+            img.onerror = () => {
+              URL.revokeObjectURL(url);
+            };
+            img.src = url;
+          } finally {
+            state.isDecoding = false;
+          }
+        };
+
+        state.ws.onclose = () => {
+          state.isConnected = false;
+          statusDot.className = 'badge-dot disconnected';
+          statusText.textContent = state.hasConnectedBefore ? '재연결 중...' : '연결 끊김';
+          clearTimeout(state.offlineTimer);
+          // Only show full-screen offline overlay if disconnected continuously for more than 4 seconds
+          state.offlineTimer = setTimeout(() => {
+            if (!state.isConnected) {
+              standbyBanner.style.display = 'none';
+              offlineBanner.style.display = 'flex';
+            }
+          }, 4000);
+          setTimeout(connectWebSocket, 1000);
+        };
+
+        state.ws.onerror = () => {
+          try { state.ws.close(); } catch (_) {}
+        };
+      } catch (err) {
+        setTimeout(connectWebSocket, 1500);
+      }
+    }
+
+    function sendAction(action, data = {}) {
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify({ action, ...data }));
+      }
+    }
+
+    // Keep Sub-phone Screen Always On while in viewfinder mode
+    let wakeLock = null;
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator && !wakeLock) {
+          wakeLock = await navigator.wakeLock.request('screen');
+          wakeLock.addEventListener('release', () => { wakeLock = null; });
+        }
+      } catch (err) {}
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') requestWakeLock();
+    });
+    window.addEventListener('load', requestWakeLock);
+    document.addEventListener('click', requestWakeLock, { once: true });
+    document.addEventListener('touchstart', requestWakeLock, { once: true });
+
+    btnReconnect.addEventListener('click', () => {
+      offlineBanner.style.display = 'none';
+      if (state.isStandby) {
+        standbyBanner.style.display = 'flex';
+      }
+      if (state.ws) {
+        try { state.ws.close(); } catch (_) {}
+        state.ws = null;
+      }
+      connectWebSocket();
+    });
+
+    applyTransforms();
+    connectWebSocket();
+    requestWakeLock();
+  </script>
+</body>
+</html>
