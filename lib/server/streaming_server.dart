@@ -90,7 +90,7 @@ class StreamingServer {
           _clients.remove(webSocket);
         },
       );
-    });
+    }, pingInterval: const Duration(seconds: 5));
 
     final handler = const Pipeline()
         .addMiddleware(logRequests())
