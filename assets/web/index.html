@@ -713,13 +713,6 @@
       }
     }
 
-    // Standby Watchdog: If mirroring was active but no frames arrive for 1.2s, auto-trigger standby!
-    setInterval(() => {
-      if (!state.isStandby && state.lastFrameTime > 0 && (performance.now() - state.lastFrameTime > 1200)) {
-        setStandby(true, 'stopped');
-      }
-    }, 400);
-
     // WebSocket Client
     let useImageBitmap = (typeof createImageBitmap === 'function');
 
