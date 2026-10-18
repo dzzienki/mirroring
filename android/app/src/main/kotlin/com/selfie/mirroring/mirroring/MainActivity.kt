@@ -52,6 +52,7 @@ class MainActivity : FlutterActivity() {
 
         ScreenCaptureService.onCaptureStopped = {
             mainHandler.post {
+                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 try {
                     methodChannel.invokeMethod("onCaptureStopped", null)
                 } catch (e: Exception) {
@@ -62,6 +63,7 @@ class MainActivity : FlutterActivity() {
 
         ScreenCaptureService.onCaptureStarted = {
             mainHandler.post {
+                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 try {
                     methodChannel.invokeMethod("onCaptureStarted", null)
                 } catch (e: Exception) {
