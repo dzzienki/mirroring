@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
@@ -23,6 +24,8 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.util.DisplayMetrics
 import android.util.Log
+import android.view.Display
+import android.view.Surface
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import java.io.ByteArrayOutputStream
@@ -52,6 +55,7 @@ class ScreenCaptureService : Service() {
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
+    private var defaultDisplay: Display? = null
 
     private var backgroundThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
@@ -59,13 +63,20 @@ class ScreenCaptureService : Service() {
     private var targetWidth = 512
     private var targetHeight = 1108
     private var densityDpi = 240
+    private var screenRealWidth = 1440
+    private var screenRealHeight = 3120
 
     // Reusable buffers to avoid GC pauses at 30-60fps
     private var cleanBuffer: ByteBuffer? = null
     private var paddedBitmap: Bitmap? = null
     private var finalBitmap: Bitmap? = null
     private var cropCanvas: Canvas? = null
+    private var letterboxCanvas: Canvas? = null
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val blackPaint = Paint().apply {
+        color = Color.BLACK
+        style = Paint.Style.FILL
+    }
     private val jpegOutputStream = ByteArrayOutputStream(128 * 1024)
 
     private var isProcessingFrame = false
@@ -171,6 +182,9 @@ class ScreenCaptureService : Service() {
         }, handler)
 
         // Calculate aspect-ratio-matched capture resolution
+        val displayManager = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+        defaultDisplay = displayManager?.getDisplay(Display.DEFAULT_DISPLAY)
+
         val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
@@ -180,9 +194,12 @@ class ScreenCaptureService : Service() {
         val realWidth = metrics.widthPixels
         val realHeight = metrics.heightPixels
 
+        screenRealWidth = minOf(realWidth, realHeight)
+        screenRealHeight = maxOf(realWidth, realHeight)
+
         // Use base width 512 for perfect 256-byte row stride alignment (512 * 4 = 2048 bytes, 2048 % 256 == 0)
         targetWidth = 512
-        targetHeight = (512.0 * realHeight / realWidth).toInt()
+        targetHeight = (512.0 * screenRealHeight / screenRealWidth).toInt()
         if (targetHeight % 2 != 0) targetHeight++
 
         Log.i(TAG, "Screen resolution: ${realWidth}x${realHeight}, capture size: ${targetWidth}x${targetHeight}")
@@ -211,6 +228,7 @@ class ScreenCaptureService : Service() {
                     if (finalBitmap == null || finalBitmap?.width != targetWidth || finalBitmap?.height != targetHeight) {
                         finalBitmap?.recycle()
                         finalBitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+                        letterboxCanvas = null
                     }
                     buffer.rewind()
                     finalBitmap!!.copyPixelsFromBuffer(buffer)
@@ -241,6 +259,7 @@ class ScreenCaptureService : Service() {
                         finalBitmap?.recycle()
                         finalBitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
                         cropCanvas = Canvas(finalBitmap!!)
+                        letterboxCanvas = null
                     }
                     val srcRect = Rect(0, 0, targetWidth, targetHeight)
                     val dstRect = Rect(0, 0, targetWidth, targetHeight)
@@ -250,13 +269,48 @@ class ScreenCaptureService : Service() {
                 image.close()
 
                 if (finalBitmap != null) {
+                    // Detect landscape rotation and blackout non-active letterbox regions
+                    val rotation = defaultDisplay?.rotation
+                        ?: (getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)?.getDisplay(Display.DEFAULT_DISPLAY)?.rotation
+                        ?: Surface.ROTATION_0
+                    val isLandscape = (rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270)
+
+                    if (isLandscape) {
+                        val maxDim = maxOf(screenRealWidth, screenRealHeight).toDouble()
+                        val minDim = minOf(screenRealWidth, screenRealHeight).toDouble()
+                        val activeHeight = (targetWidth.toDouble() * minDim / maxDim).toInt()
+                        val letterboxHeight = (targetHeight - activeHeight) / 2
+
+                        if (letterboxHeight > 0) {
+                            if (letterboxCanvas == null) {
+                                letterboxCanvas = Canvas(finalBitmap!!)
+                            }
+                            // Top letterbox
+                            letterboxCanvas!!.drawRect(
+                                0f,
+                                0f,
+                                targetWidth.toFloat(),
+                                letterboxHeight.toFloat(),
+                                blackPaint
+                            )
+                            // Bottom letterbox
+                            letterboxCanvas!!.drawRect(
+                                0f,
+                                (targetHeight - letterboxHeight).toFloat(),
+                                targetWidth.toFloat(),
+                                targetHeight.toFloat(),
+                                blackPaint
+                            )
+                        }
+                    }
+
                     jpegOutputStream.reset()
                     finalBitmap!!.compress(Bitmap.CompressFormat.JPEG, 62, jpegOutputStream)
                     val jpegBytes = jpegOutputStream.toByteArray()
 
                     frameCounter++
                     if (frameCounter % 60 == 0L) {
-                        Log.d(TAG, "Frame #$frameCounter captured, size: ${jpegBytes.size} bytes")
+                        Log.d(TAG, "Frame #$frameCounter captured (isLandscape=$isLandscape), size: ${jpegBytes.size} bytes")
                     }
 
                     onFrameCaptured?.invoke(jpegBytes)
@@ -300,7 +354,9 @@ class ScreenCaptureService : Service() {
             finalBitmap?.recycle()
             finalBitmap = null
             cropCanvas = null
+            letterboxCanvas = null
             cleanBuffer = null
+            defaultDisplay = null
         } catch (e: Exception) {
             // ignore cleanup errors
         }
