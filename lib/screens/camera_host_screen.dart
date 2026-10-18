@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:network_info_plus/network_info_plus.dart';
@@ -23,12 +24,34 @@ class _CameraHostScreenState extends State<CameraHostScreen> {
   StreamingServer? _server;
   String _serverIp = '127.0.0.1';
   final int _serverPort = 8080;
+  String _sessionToken = '';
   int _connectedClientCount = 0;
   bool _isMirroring = false;
 
   bool _isAccessibilityEnabled = false;
 
   Timer? _statusTimer;
+
+  static String _generateSessionToken() {
+    const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+    final rand = Random.secure();
+    return List.generate(8, (_) => chars[rand.nextInt(chars.length)]).join();
+  }
+
+  void _regenerateToken() {
+    final newToken = _generateSessionToken();
+    setState(() {
+      _sessionToken = newToken;
+    });
+    _server?.updateSessionToken(newToken);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('🔒 새로운 보안 토큰이 발급되었습니다. 이전 기기가 즉시 차단되었습니다.'),
+        backgroundColor: Colors.teal,
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -50,9 +73,12 @@ class _CameraHostScreenState extends State<CameraHostScreen> {
     // 2. Resolve IP Address (Wi-Fi or Hotspot)
     await _resolveLocalIp();
 
-    // 3. Start Streaming Server
+    // 3. Generate Cryptographic Session Token & Start Streaming Server
+    _sessionToken = _generateSessionToken();
     _server = StreamingServer(
       port: _serverPort,
+      sessionToken: _sessionToken,
+      maxClients: 1,
       onClientAction: _handleClientAction,
     );
     await _server!.start();
@@ -203,7 +229,7 @@ class _CameraHostScreenState extends State<CameraHostScreen> {
     }
   }
 
-  String get _connectionUrl => 'http://$_serverIp:$_serverPort';
+  String get _connectionUrl => 'http://$_serverIp:$_serverPort/?token=$_sessionToken';
 
   @override
   Widget build(BuildContext context) {
@@ -252,8 +278,8 @@ class _CameraHostScreenState extends State<CameraHostScreen> {
                         children: [
                           Text(
                             _connectedClientCount > 0
-                                ? '서브 폰 연결됨 ($_connectedClientCount대)'
-                                : '서브 폰 연결 대기 중...',
+                                ? '서브 폰 연결됨 (1대 독점 잠금)'
+                                : '서브 폰 연결 대기 중 (1대 전용)',
                             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                           ),
                           const SizedBox(height: 2),
@@ -267,6 +293,20 @@ class _CameraHostScreenState extends State<CameraHostScreen> {
                         ],
                       ),
                     ),
+                    if (_connectedClientCount > 0)
+                      TextButton.icon(
+                        onPressed: () {
+                          _server?.disconnectAllClients();
+                          setState(() => _connectedClientCount = 0);
+                        },
+                        icon: const Icon(Icons.link_off, size: 16, color: Colors.redAccent),
+                        label: const Text('연결 해제', style: TextStyle(color: Colors.redAccent, fontSize: 12)),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -440,7 +480,50 @@ class _CameraHostScreenState extends State<CameraHostScreen> {
                       style: const TextStyle(
                         color: Colors.cyanAccent,
                         fontWeight: FontWeight.bold,
-                        fontSize: 14,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+
+                    // Security Badge & Token Refresh Button
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.greenAccent.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.25)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.shield_outlined, color: Colors.greenAccent, size: 16),
+                          const SizedBox(width: 6),
+                          Text(
+                            '보안 토큰: $_sessionToken',
+                            style: const TextStyle(
+                              color: Colors.greenAccent,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                              letterSpacing: 1.1,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          InkWell(
+                            onTap: _regenerateToken,
+                            borderRadius: BorderRadius.circular(8),
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.refresh, color: Colors.white70, size: 14),
+                                  SizedBox(width: 3),
+                                  Text('재발급', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600)),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],

@@ -741,7 +741,9 @@
 
       const loc = window.location;
       const wsProto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${wsProto}//${loc.host}/ws`;
+      const urlParams = new URLSearchParams(loc.search);
+      const token = urlParams.get('token') || '';
+      const wsUrl = `${wsProto}//${loc.host}/ws${token ? '?token=' + encodeURIComponent(token) : ''}`;
 
       statusText.textContent = state.hasConnectedBefore ? '재연결 중...' : '연결 중...';
       statusDot.className = 'badge-dot disconnected';
@@ -858,11 +860,25 @@
           }
         };
 
-        state.ws.onclose = () => {
+        state.ws.onclose = (event) => {
           state.isConnected = false;
           statusDot.className = 'badge-dot disconnected';
-          statusText.textContent = state.hasConnectedBefore ? '재연결 중...' : '연결 끊김';
           clearTimeout(state.offlineTimer);
+
+          // Handle 4001: Token expired or another device connected
+          if (event && event.code === 4001) {
+            statusText.textContent = '연결 해제됨';
+            showToast('보안 토큰 만료 또는 다른 기기 연결됨');
+            standbyBanner.style.display = 'none';
+            offlineBanner.style.display = 'flex';
+            const h2 = offlineBanner.querySelector('h2');
+            const p = offlineBanner.querySelector('p');
+            if (h2) h2.textContent = '보안 세션 만료';
+            if (p) p.innerHTML = '새로운 보안 토큰이 발급되었거나 다른 기기가 연결되었습니다.<br>메인 폰(갤럭시)의 <b>최신 QR 코드</b>를 다시 스캔해 주세요.';
+            return;
+          }
+
+          statusText.textContent = state.hasConnectedBefore ? '재연결 중...' : '연결 끊김';
           // Only show full-screen offline overlay if disconnected continuously for more than 4 seconds
           state.offlineTimer = setTimeout(() => {
             if (!state.isConnected) {
